@@ -7,7 +7,8 @@ from pyrogram.errors import (
     ChatAdminRequired,
     UserBannedInChannel,
     PeerIdInvalid,
-    RPCError
+    RPCError,
+    FloodWait
 )
 from info import ADMINS, LOG_CHANNEL
 from database.users_chats_db import db
@@ -33,10 +34,13 @@ async def cleanup_groups(bot, message):
     for chat in chats:
         chat_id = int(chat["id"])
 
-        # Try sending a small test message
         try:
             await bot.send_message(chat_id, CLEANUP_TEST_MESSAGE)
             ok += 1
+
+        except FloodWait as e:
+            await asyncio.sleep(e.value)
+            continue
 
         except ChatWriteForbidden:
             removed += 1
@@ -63,7 +67,7 @@ async def cleanup_groups(bot, message):
             continue
 
         done += 1
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(1.0)
 
         if not done % 20:
             await sts.edit(
@@ -75,40 +79,36 @@ async def cleanup_groups(bot, message):
                 f"Errors: `{failed}`"
             )
 
-    # Final summary
     time_taken = datetime.timedelta(seconds=int(time.time() - start_time))
 
     await sts.edit(
         f"✅ **Cleanup Completed**\n"
         f"Time Taken: `{time_taken}`\n\n"
         f"Total Groups: `{total_chats}`\n"
-        f"Checked: `{done}`\n"
         f"Working: `{ok}`\n"
         f"Removed: `{removed}`\n"
         f"Errors: `{failed}`"
     )
 
-    await bot.send_message(
-        LOG_CHANNEL,
-        f"🧹 **Group Cleanup Summary**\n"
-        f"Total Groups: `{total_chats}`\n"
-        f"Working: `{ok}`\n"
-        f"Left Groups: `{removed}`\n"
-        f"Errors: `{failed}`\n"
-        f"Duration: `{time_taken}`"
-    )
-
 
 async def leave_and_log(bot, chat_id, reason):
-    """Leave group and log to LOG_CHANNEL"""
     try:
         await bot.leave_chat(chat_id)
     except:
         pass
 
-    await bot.send_message(
-        LOG_CHANNEL,
-        f"🚫 **Left Group**\n"
-        f"Group ID: `{chat_id}`\n"
-        f"Reason: `{reason}`"
-    )
+    try:
+        await bot.send_message(
+            LOG_CHANNEL,
+            f"🚫 **Left Group**\n"
+            f"Group ID: `{chat_id}`\n"
+            f"Reason: `{reason}`"
+        )
+    except FloodWait as e:
+        await asyncio.sleep(e.value)
+        await bot.send_message(
+            LOG_CHANNEL,
+            f"🚫 **Left Group**\n"
+            f"Group ID: `{chat_id}`\n"
+            f"Reason: `{reason}`"
+        )
