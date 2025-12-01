@@ -1,48 +1,115 @@
 import asyncio
 from pyrogram import Client, filters
+from pyrogram.errors import FloodWait
 from info import ADMINS, LOG_CHANNEL
-from database.ia_filterdb import Media, Media2
 from motor.motor_asyncio import AsyncIOMotorClient
-from info import DATABASE_URI, DATABASE_NAME, SECONDDB_URI
 
-BATCH_SIZE = 500   # safe batch size for MongoDB
+# ❗ YOUR DATABASE NAMES
+PRIMARY_DB = "Emmastonev2"
+SECONDARY_DB = "Emmastonev2_backup"
+
+# ❗ COLLECTIONS TO MIGRATE
+COLLECTIONS = ["Telegram_files", "users", "groups", "connections"]
+
+# ❗ Batch size
+BATCH = 2500
 
 
-@Client.on_message(filters.command("migrate_to_secondary") & filters.user(ADMINS))
-async def migrate_to_secondary(bot, message):
+# -------------------------------------------------------
+# /migrate command
+# -------------------------------------------------------
+@Client.on_message(filters.command("migrate") & filters.user(ADMINS))
+async def migrate_db(bot, message):
 
-    await message.reply_text("🔄 **Migration started…**\nCopying Primary → Secondary DB")
+    status = await message.reply_text("⏳ **Preparing database migration...**")
 
-    primary = AsyncIOMotorClient(DATABASE_URI)[DATABASE_NAME][Media.Meta.collection_name]
-    secondary = AsyncIOMotorClient(SECONDDB_URI)[DATABASE_NAME][Media2.Meta.collection_name]
+    # Connect to both DBs
+    primary_client = AsyncIOMotorClient(bot.config["DATABASE_URI"])
+    secondary_client = AsyncIOMotorClient(bot.config["SECONDDB_URI"])
 
-    total = await primary.count_documents({})
-    copied = 0
+    primary = primary_client[PRIMARY_DB]
+    secondary = secondary_client[SECONDARY_DB]
 
-    # Cursor for batch reading
-    cursor = primary.find({}, no_cursor_timeout=True)
+    total_docs = 0
+    migrated_docs = 0
 
-    async for doc in cursor:
-        try:
-            await secondary.insert_one(doc)
-        except Exception:
-            pass  # Ignore duplicate errors
+    # -------------------------------
+    # Count total documents
+    # -------------------------------
+    for col in COLLECTIONS:
+        count = await primary[col].count_documents({})
+        total_docs += count
 
-        copied += 1
+    await status.edit(f"📦 **Migration Started**\n\n"
+                      f"🗂 Total documents to migrate: `{total_docs}`\n"
+                      f"📁 Collections: `{', '.join(COLLECTIONS)}`\n"
+                      f"⚡ Batch size: `{BATCH}`\n\n"
+                      f"⏳ Starting now...")
 
-        # Progress update
-        if copied % BATCH_SIZE == 0:
-            await bot.send_message(
-                LOG_CHANNEL,
-                f"📦 Migrated: `{copied}` / `{total}`"
-            )
+    # -------------------------------
+    # Start migration
+    # -------------------------------
+    for col in COLLECTIONS:
+        collection_primary = primary[col]
+        collection_secondary = secondary[col]
 
-        await asyncio.sleep(0.01)  # prevent overload
+        count = await collection_primary.count_documents({})
+        if count == 0:
+            await bot.send_message(LOG_CHANNEL, f"⚠️ `{col}` is empty. Skipping.")
+            continue
+
+        await bot.send_message(LOG_CHANNEL,
+                               f"📁 **Migrating collection:** `{col}`\n"
+                               f"Total: `{count}` documents")
+
+        skip = 0
+
+        while skip < count:
+            try:
+                cursor = collection_primary.find().skip(skip).limit(BATCH)
+                documents = await cursor.to_list(length=BATCH)
+
+                if not documents:
+                    break
+
+                # Prevent duplicate _id
+                for doc in documents:
+                    doc.pop("_id", None)
+
+                if documents:
+                    await collection_secondary.insert_many(documents)
+
+                skip += len(documents)
+                migrated_docs += len(documents)
+
+                await status.edit(
+                    f"⬆️ **Migrating...**\n"
+                    f"📁 Current collection: `{col}`\n"
+                    f"🟩 Migrated `{migrated_docs}` / `{total_docs}`\n"
+                    f"📦 Batch size: `{BATCH}`"
+                )
+
+                await asyncio.sleep(0.5)
+
+            except FloodWait as e:
+                await asyncio.sleep(e.value)
+
+    # -------------------------------
+    # DONE
+    # -------------------------------
+    await status.edit(
+        f"✅ **Migration completed successfully!**\n\n"
+        f"📦 Total migrated: `{migrated_docs}`\n"
+        f"📁 Collections: `{', '.join(COLLECTIONS)}`\n"
+        f"📍 Primary → `{PRIMARY_DB}`\n"
+        f"📍 Secondary → `{SECONDARY_DB}`\n\n"
+        f"⚠️ No content was deleted.\n"
+        f"🟢 Safe to verify now."
+    )
 
     await bot.send_message(
         LOG_CHANNEL,
-        f"✅ **Migration Completed**\n"
-        f"Total Files Migrated: `{copied}`\n\n"
-        f"⚠️ **Waiting for your verification**.\n"
-        f"No data has been deleted."
+        f"🎉 **Database Migration Completed**\n\n"
+        f"Total Migrated: `{migrated_docs}`\n"
+        f"From: `{PRIMARY_DB}` → `{SECONDARY_DB}`"
     )
