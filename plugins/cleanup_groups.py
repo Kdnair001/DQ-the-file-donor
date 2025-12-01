@@ -10,7 +10,7 @@ from pyrogram.errors import (
     ChannelInvalid,
     ChatIdInvalid,
     ChatRestricted,
-    ChannelPrivate,        # ✅ ADDED
+    ChannelPrivate,
     RPCError,
     FloodWait,
 )
@@ -28,10 +28,15 @@ async def chat_exists(bot, chat_id):
     try:
         await bot.get_chat(chat_id)
         return True
-    except (PeerIdInvalid, ChannelInvalid, ChatIdInvalid, ChannelPrivate):  # ✅ UPDATED
+
+    except ValueError:  # ✅ Peer id invalid BEFORE API call
         return False
+
+    except (PeerIdInvalid, ChannelInvalid, ChatIdInvalid, ChannelPrivate):
+        return False
+
     except RPCError:
-        return True  # Chat exists but may have restrictions
+        return True  # Exists but restricted
 
 
 # ----------------------------------------------------------
@@ -51,13 +56,13 @@ async def leave_and_log(bot, chat_id, reason):
         except:
             pass
 
-    # Try leaving
+    # Attempt leaving
     try:
         await bot.leave_chat(chat_id)
     except:
         pass
 
-    # Log to LOG_CHANNEL
+    # Log action
     try:
         await bot.send_message(
             LOG_CHANNEL,
@@ -97,13 +102,13 @@ async def cleanup_groups(bot, message):
     for chat in chats:
         chat_id = int(chat["id"])
 
-        # √ 1. CHECK CHAT EXISTS
+        # STEP 1: Check existence
         if not await chat_exists(bot, chat_id):
             removed += 1
-            await leave_and_log(bot, chat_id, "Invalid / Private / Deleted group")
+            await leave_and_log(bot, chat_id, "Invalid / Deleted / Private / Bad ID")
             continue
 
-        # √ 2. TRY SENDING MESSAGE
+        # STEP 2: Test sending message
         try:
             await bot.send_message(chat_id, CLEANUP_TEST_MESSAGE)
             ok += 1
@@ -118,19 +123,19 @@ async def cleanup_groups(bot, message):
 
         except ChatAdminRequired:
             removed += 1
-            await leave_and_log(bot, chat_id, "Bot missing admin rights")
+            await leave_and_log(bot, chat_id, "Admin rights missing")
 
         except ChatRestricted:
             removed += 1
-            await leave_and_log(bot, chat_id, "ChatRestricted: Group is restricted")
+            await leave_and_log(bot, chat_id, "ChatRestricted: Cannot send messages")
 
         except UserBannedInChannel:
             removed += 1
-            await leave_and_log(bot, chat_id, "Bot banned in group")
+            await leave_and_log(bot, chat_id, "Bot banned")
 
-        except ChannelPrivate:          # ✅ NEW HANDLER
+        except ChannelPrivate:
             removed += 1
-            await leave_and_log(bot, chat_id, "ChannelPrivate: Bot not allowed / removed")
+            await leave_and_log(bot, chat_id, "ChannelPrivate: Bot not allowed")
 
         except ChatIdInvalid:
             removed += 1
@@ -138,7 +143,7 @@ async def cleanup_groups(bot, message):
 
         except (PeerIdInvalid, ChannelInvalid):
             removed += 1
-            await leave_and_log(bot, chat_id, "PeerIdInvalid/ChannelInvalid: Deleted or inaccessible")
+            await leave_and_log(bot, chat_id, "ID invalid or deleted")
 
         except RPCError as e:
             failed += 1
@@ -151,7 +156,7 @@ async def cleanup_groups(bot, message):
                 pass
             continue
 
-        # √ 3. Progress Update
+        # STEP 3: Progress update
         done += 1
         await asyncio.sleep(1.0)
 
@@ -165,9 +170,8 @@ async def cleanup_groups(bot, message):
                 f"Errors: `{failed}`"
             )
 
-    # √ DONE
+    # FINAL SUMMARY
     time_taken = datetime.timedelta(seconds=int(time.time() - start_time))
-
     await sts.edit(
         f"✅ **Cleanup Completed**\n"
         f"Time Taken: `{time_taken}`\n\n"
