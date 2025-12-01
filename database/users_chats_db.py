@@ -202,16 +202,33 @@ class Database:
         return default
     
 
-    async def disable_chat(self, chat, reason="No Reason"):
-        chat_status=dict(
-            is_disabled=True,
-            reason=reason,
-            )
-        chat = await self.grp.find_one({'id':int(chat)})
-        if chat:
-            await self.grp.update_one({'id': int(chat)}, {'$set': {'chat_status': chat_status}})
-        else:
-            await self.grp2.update_one({'id': int(chat)}, {'$set': {'chat_status': chat_status}})
+    async def disable_chat(self, chat_id, reason="No Reason"):
+    chat_status = dict(
+        is_disabled=True,
+        reason=reason,
+    )
+
+    # Check primary DB
+    chat = await self.grp.find_one({'id': int(chat_id)})
+    if chat:
+        await self.grp.update_one(
+            {'id': int(chat_id)},
+            {'$set': {'chat_status': chat_status}}
+        )
+        return
+
+    # Check secondary DB
+    chat = await self.grp2.find_one({'id': int(chat_id)})
+    if chat:
+        await self.grp2.update_one(
+            {'id': int(chat_id)},
+            {'$set': {'chat_status': chat_status}}
+        )
+        return
+
+    # If chat not found, silently skip
+    return
+
     
 
     async def total_chat_count(self):
