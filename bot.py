@@ -37,11 +37,6 @@ class Bot(Client):
             sleep_threshold=10,
         )
 
-        # -------------------------------------------------------
-        # 🔒 Upload Lock — prevents interference with PM uploads
-        # -------------------------------------------------------
-        self.upload_lock = asyncio.Lock()
-
     async def start(self):
         b_users, b_chats = await db.get_banned()
         temp.BANNED_USERS = b_users
