@@ -92,23 +92,36 @@ async def cleanup_groups(bot, message):
 
 
 async def leave_and_log(bot, chat_id, reason):
+    # 1️⃣ Disable the group in DB
+    try:
+        await db.disable_chat(chat_id, reason)
+    except Exception as e:
+        await bot.send_message(
+            LOG_CHANNEL,
+            f"⚠️ Failed to disable chat `{chat_id}` in DB:\n`{e}`"
+        )
+
+    # 2️⃣ Try leaving the group
     try:
         await bot.leave_chat(chat_id)
     except:
         pass
 
+    # 3️⃣ Log the action
     try:
         await bot.send_message(
             LOG_CHANNEL,
-            f"🚫 **Left Group**\n"
+            f"🚫 **Removed Group**\n"
             f"Group ID: `{chat_id}`\n"
-            f"Reason: `{reason}`"
+            f"Reason: `{reason}`\n"
+            f"📌 Status updated in database."
         )
     except FloodWait as e:
         await asyncio.sleep(e.value)
         await bot.send_message(
             LOG_CHANNEL,
-            f"🚫 **Left Group**\n"
+            f"🚫 **Removed Group**\n"
             f"Group ID: `{chat_id}`\n"
-            f"Reason: `{reason}`"
+            f"Reason: `{reason}`\n"
+            f"📌 Status updated in database."
         )
