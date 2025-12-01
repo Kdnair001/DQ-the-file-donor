@@ -8,6 +8,8 @@ from pyrogram.errors import (
     UserBannedInChannel,
     PeerIdInvalid,
     ChannelInvalid,
+    ChatIdInvalid,
+    ChatRestricted,        # ✅ ADDED
     RPCError,
     FloodWait,
 )
@@ -18,40 +20,43 @@ from database.users_chats_db import db
 CLEANUP_TEST_MESSAGE = "🧹 **System Permission Check...**"
 
 
-#----------------------------------------------------------
+# ----------------------------------------------------------
 # CHECK WHETHER CHAT EXISTS BEFORE SENDING ANYTHING
-#----------------------------------------------------------
+# ----------------------------------------------------------
 async def chat_exists(bot, chat_id):
     try:
         await bot.get_chat(chat_id)
         return True
-    except (PeerIdInvalid, ChannelInvalid):
+    except (PeerIdInvalid, ChannelInvalid, ChatIdInvalid):
         return False
     except RPCError:
-        # Chat exists but other errors may occur
-        return True
+        return True  # Chat exists but may have other restrictions
 
 
-#----------------------------------------------------------
+# ----------------------------------------------------------
 # SMART LEAVE + DB DISABLE + LOGGING
-#----------------------------------------------------------
+# ----------------------------------------------------------
 async def leave_and_log(bot, chat_id, reason):
-    # Disable in DB
+
+    # Disable chat in DB
     try:
         await db.disable_chat(chat_id, reason)
     except Exception as e:
-        await bot.send_message(
-            LOG_CHANNEL,
-            f"⚠️ Failed to disable `{chat_id}` in DB:\n`{e}`"
-        )
+        try:
+            await bot.send_message(
+                LOG_CHANNEL,
+                f"⚠️ Failed to disable `{chat_id}` in DB:\n`{e}`"
+            )
+        except:
+            pass
 
-    # Attempt leaving
+    # Try leaving the group
     try:
         await bot.leave_chat(chat_id)
     except:
         pass
 
-    # Log
+    # Log to log channel
     try:
         await bot.send_message(
             LOG_CHANNEL,
@@ -67,11 +72,13 @@ async def leave_and_log(bot, chat_id, reason):
             f"Group ID: `{chat_id}`\n"
             f"Reason: `{reason}`"
         )
+    except Exception:
+        pass
 
 
-#----------------------------------------------------------
+# ----------------------------------------------------------
 # CLEANUP COMMAND
-#----------------------------------------------------------
+# ----------------------------------------------------------
 @Client.on_message(filters.command("cleanup_groups") & filters.user(ADMINS))
 async def cleanup_groups(bot, message):
 
@@ -89,17 +96,17 @@ async def cleanup_groups(bot, message):
     for chat in chats:
         chat_id = int(chat["id"])
 
-        #------------------------------
+        # --------------------------------------------------
         # 1. CHECK CHAT EXISTS
-        #------------------------------
+        # --------------------------------------------------
         if not await chat_exists(bot, chat_id):
             removed += 1
-            await leave_and_log(bot, chat_id, "ChannelInvalid: Group deleted / inaccessible")
+            await leave_and_log(bot, chat_id, "Invalid chat: Deleted / inaccessible")
             continue
 
-        #------------------------------
+        # --------------------------------------------------
         # 2. TRY SENDING TEST MESSAGE
-        #------------------------------
+        # --------------------------------------------------
         try:
             await bot.send_message(chat_id, CLEANUP_TEST_MESSAGE)
             ok += 1
@@ -116,9 +123,17 @@ async def cleanup_groups(bot, message):
             removed += 1
             await leave_and_log(bot, chat_id, "ChatAdminRequired: Missing admin rights")
 
+        except ChatRestricted:
+            removed += 1
+            await leave_and_log(bot, chat_id, "ChatRestricted: Group is restricted / read-only")
+
         except UserBannedInChannel:
             removed += 1
             await leave_and_log(bot, chat_id, "UserBannedInChannel: Bot banned")
+
+        except ChatIdInvalid:
+            removed += 1
+            await leave_and_log(bot, chat_id, "ChatIdInvalid: Unknown or invalid chat")
 
         except (PeerIdInvalid, ChannelInvalid):
             removed += 1
@@ -126,15 +141,18 @@ async def cleanup_groups(bot, message):
 
         except RPCError as e:
             failed += 1
-            await bot.send_message(
-                LOG_CHANNEL,
-                f"⚠️ Unexpected error in `{chat_id}`:\n`{e}`"
-            )
+            try:
+                await bot.send_message(
+                    LOG_CHANNEL,
+                    f"⚠️ Unexpected error in `{chat_id}`:\n`{e}`"
+                )
+            except:
+                pass
             continue
 
-        #------------------------------
-        # 3. Progress Update
-        #------------------------------
+        # --------------------------------------------------
+        # 3. PROGRESS UPDATE
+        # --------------------------------------------------
         done += 1
         await asyncio.sleep(1.0)
 
@@ -148,9 +166,9 @@ async def cleanup_groups(bot, message):
                 f"Errors: `{failed}`"
             )
 
-    #---------------------------------------------------------
-    # DONE
-    #---------------------------------------------------------
+    # ----------------------------------------------------------
+    # FINAL REPORT
+    # ----------------------------------------------------------
     time_taken = datetime.timedelta(seconds=int(time.time() - start_time))
 
     await sts.edit(
