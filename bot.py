@@ -23,6 +23,23 @@ from plugins import web_server
 from sample_info import tempDict
 import asyncio
 
+# ---------------------------------------------------------
+#    KEEP ALIVE TASK (Send message every 290 seconds)
+# ---------------------------------------------------------
+async def keep_alive_task(client):
+    while True:
+        try:
+            await client.send_message(
+                chat_id=LOG_CHANNEL,
+                text="🤖 I am alive — keep-alive heartbeat."
+            )
+            logging.info("Keep-alive heartbeat sent.")
+        except Exception as e:
+            logging.error(f"Keep-alive error: {e}")
+
+        await asyncio.sleep(290)  # send every 290 seconds
+# ---------------------------------------------------------
+
 
 class Bot(Client):
 
@@ -96,6 +113,12 @@ class Bot(Client):
         await app.setup()
         bind_address = "0.0.0.0"
         await web.TCPSite(app, bind_address, PORT).start()
+
+        # -------------------------------------------------
+        # Start keep-alive background task
+        # -------------------------------------------------
+        asyncio.create_task(keep_alive_task(self))
+        logging.info("Keep-alive task started.")
 
     async def stop(self, *args):
         await super().stop()
